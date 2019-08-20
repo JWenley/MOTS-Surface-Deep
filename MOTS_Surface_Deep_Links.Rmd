@@ -1,0 +1,908 @@
+---
+title: "MOTS-Surface-Deep"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Load libraries and amplicon data}
+library(phyloseq)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(dplyr)
+library(scales)
+library(reshape)
+library(RColorBrewer)
+library(grid)
+library(vegan)
+library(ggrepel)
+library(Rmisc)
+library(tidyverse)
+library(PMCMRplus)
+library(ampvis2)
+library(viridis)
+library(MultNonParam)
+library(PMCMRplus)
+library(edgeR)
+
+setwd("/Your_FilePath")
+
+uzdir <- "/Your_FilePath"
+
+otutable_biom_file <- paste("merged_otu_table_json.biom", sep = "")
+
+map_file <- paste("Munida_16S.txt", sep = "")
+```
+
+```{r Fig1a background data}
+meta <- read.csv(file = "metadata_surfdeep.csv", header = TRUE)
+
+a2= ggplot(meta,aes(x= Order, y= BA, colour = Surface_Deep)) + theme_bw() + 
+  annotate("rect", fill = "grey90", alpha = 0.5, xmin = 7, xmax = 11, ymin = -Inf, ymax = Inf) + 
+  geom_point(aes(shape = Surface_Deep), size = 4) + geom_line(size = 1) +
+  theme(axis.text.x=element_blank(), axis.text.y=element_text(size = 22), plot.margin = unit(c(0,1,-1,0), "lines"), axis.title.y=element_text(size = 20)) +
+  geom_line(data=meta[!is.na(meta$BA),], linetype = "dotted", size = 1) + 
+  scale_x_discrete(limits = c("Jan-14", "Jun-14", "Jul-14", "Dec-14","Mar-15", "Apr-15", "Aug-15", "Nov-15", "Dec-15", "Jan-16", "Mar-16", "Aug-16", "Feb-17", "Feb2-17", "Mar-17")) + 
+  xlab (NULL) + scale_y_continuous(labels = scientific, name = "Bacterial abundance\n(cells/mL)")
+
+
+a3= ggplot(meta,aes(x= Order,y= BP, colour = Surface_Deep)) + theme_bw() + 
+  annotate("rect", fill = "grey90", alpha = 0.5, xmin = 7, xmax = 11, ymin = -Inf, ymax = Inf) + 
+  geom_point(aes(shape = Surface_Deep), size = 4) + geom_line(size = 1) +
+  theme(axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1, size = 24), axis.title.y=element_text(size = 20), axis.text.y=element_text(size = 22), plot.margin = unit(c(0,1,-1,0), "lines")) +
+  geom_line(data=meta[!is.na(meta$BP),], linetype = "dotted", size = 1)+ 
+  scale_x_discrete(name = "Time", limits = c("Jan-14", "Jun-14", "Jul-14", "Dec-14","Mar-15", "Apr-15", "Aug-15", "Nov-15", "Dec-15", "Jan-16", "Mar-16", "Aug-16", "Feb-17", "Feb2-17", "Mar-17")) + 
+  xlab (NULL) + scale_y_continuous(name = "Bacterial production\n(pmol Leu/l/h)")
+
+a1= ggplot(meta,aes(x= Order,y= Chlorophylla, colour = Surface_Deep)) + theme_bw() + 
+  annotate("rect", fill = "grey90", alpha = 0.5, xmin = 7, xmax = 11, ymin = -Inf, ymax = Inf) + 
+  geom_point(aes(shape = Surface_Deep), size = 4) + geom_line(size = 1) +
+  theme(axis.text.x=element_blank(), axis.title.y=element_text(size = 20), axis.text.y=element_text(size = 22), axis.title.x=element_text(size = 18), plot.margin = unit(c(0,1,-1,0), "lines")) +
+  geom_line(data=meta[!is.na(meta$Chlorophylla),], linetype = "dotted", size = 1) + 
+  scale_x_discrete(limits = c("Jan-14", "Jun-14", "Jul-14", "Dec-14","Mar-15", "Apr-15", "Aug-15", "Nov-15", "Dec-15", "Jan-16", "Mar-16", "Aug-16", "Feb-17", "Feb2-17", "Mar-17")) + scale_y_continuous(name = expression(atop(Chlorophyll~italic(alpha),(mg/m^3))))
+
+fig1a= ggarrange(a1, a2, a3, nrow = 3, common.legend = TRUE, legend = c("bottom"), align = "hv")
+```
+
+```{r fig 1a kruskal} 
+kruskal.test(Chlorophylla ~ Month_year, subset = Surface_Deep == "Surface", data = meta)
+
+kruskal.test(Chlorophylla ~ Month_year, subset = Surface_Deep == "Deep", data = meta)
+
+kruskal.test(BA ~ Month_year, subset = Surface_Deep == "Surface", data = meta)
+
+kruskal.test(BA ~ Month_year, subset = Surface_Deep == "Deep", data = meta)
+
+kruskal.test(BP ~ Month_year, subset = Surface_Deep == "Surface", data = meta)
+
+kruskal.test(BP ~ Month_year, subset = Surface_Deep == "Deep", data = meta)
+
+```
+
+```{r Create phyloseq object}
+biom_otu_tax <- import_biom(otutable_biom_file)
+bmsd <- import_qiime_sample_data(map_file)
+biom_otu_tax
+
+Munida_phyloseq <- merge_phyloseq(biom_otu_tax, bmsd)
+Munida_phyloseq
+sample_sums(Munida_phyloseq)
+```
+
+```{r remove OTUs that aren't present in at least one sample, confirm all taxa > 0}
+Munida_phyloseq = prune_taxa (taxa_sums(Munida_phyloseq) > 0, Munida_phyloseq)
+any (taxa_sums(Munida_phyloseq) == 0)
+
+```
+
+```{r divide counds by 10 and round}
+Munida_phyloseq = transform_sample_counts(Munida_phyloseq, function(x) x / 10)
+Munida_phyloseq = transform_sample_counts(Munida_phyloseq, round)
+```
+
+```{r Rename Ranks}
+colnames(tax_table(Munida_phyloseq)) = c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+
+tax_table(Munida_phyloseq) =gsub("D_1__", "", tax_table(Munida_phyloseq))
+tax_table(Munida_phyloseq) =gsub("D_2__", "", tax_table(Munida_phyloseq))
+tax_table(Munida_phyloseq) =gsub("D_3__", "", tax_table(Munida_phyloseq))
+tax_table(Munida_phyloseq) =gsub("D_4__", "", tax_table(Munida_phyloseq))
+tax_table(Munida_phyloseq) =gsub("D_5__", "", tax_table(Munida_phyloseq))
+
+sample_sums(Munida_phyloseq)
+```
+
+```{r subset phyloseq object for station 8 only, then by surface and deep}
+Munida8 = subset_samples(Munida_phyloseq, Published_station == "8")
+Munida8
+
+Munidasurf = subset_samples(Munida8, Surface_Deep == "Surface")
+Munidasurf
+
+Munidadeep = subset_samples(Munida8, Surface_Deep == "Deep")
+Munidadeep
+```
+
+```{r Plot alpha diversity Fig1b}
+filter_alpha= plot_richness(Munida8, x = "Season", color="Surface_Deep", measures = c("Shannon", "Observed")) +theme(text = element_text(size = 14)) + geom_boxplot(alpha = 0.2, lwd = 1.0, fatten = 1, position = position_dodge(0.9)) 
+  
+  
+fig1b<-filter_alpha + theme_bw() +
+  theme(
+    plot.background = element_blank()
+    ,panel.grid.major = element_blank()
+    ,panel.grid.minor = element_blank()
+    ,panel.background = element_blank()
+    ,axis.text.x  = element_text( vjust=0.5, size=12)
+  ) + theme(axis.title.x = element_text(face="bold",size=18),
+        axis.text.x = element_text(colour = "black", vjust = 1, hjust = 1, size=18, angle = 45),
+        axis.text.y = element_text(colour = "black", size=18),
+        axis.title.y = element_text(size=18),
+        strip.text.x = element_text(face="bold", size=18),
+        strip.text.y = element_blank(), 
+          strip.background = element_rect(colour = "black", fill = "white"),
+        legend.position="none")+
+    xlab("") + ylab("Richness") + 
+  scale_x_discrete(limits = c("Spring", "Summer", "Autumn", "Winter"))
+
+fig1b$layers <- fig1b$layers [-1]
+fig1b
+```
+
+```{r Calculate alpha diversity Fig1b}
+alpha_summary_Fig1 <- estimate_richness(Munida8, measures = c("Observed", "Shannon"))
+summary(alpha_summary_Fig1)
+alpha_meta_Fig1 <- data.frame(alpha_summary_Fig1, sample_data(Munida8))
+
+setDT(alpha_meta_Fig1)[ , list(mean_gr = mean(Observed), sum_gr = sum(Observed)) , by = .(Depth_season)]
+
+setDT(alpha_meta_Fig1)[ , list(mean_gr = mean(Shannon), sum_gr = sum(Shannon)) , by = .(Depth_season)]
+
+#kruskal test of alpha diversity
+kruskal.test(Observed ~ Depth_season, data = alpha_meta_Fig1)
+
+kruskal.test(Shannon ~ Depth_season, data = alpha_meta_Fig1)
+```
+
+```{r beta div test with ANOSIM & ADONIS for fig1c}
+#ANOSIM
+Depth_group = get_variable(Munida8, "Depth_season")
+Depth_ano = anosim(phyloseq::distance(Munida8, "bray"), Depth_group)
+Depth_ano$signif
+Depth_ano$statistic
+
+#ADONIS
+#Create a data frame using your sample_data
+df_ado = as(sample_data(Munida8), "data.frame")
+#Calculate your Bray distance matrix
+Depth_ado = phyloseq::distance(Munida8, "bray")
+#Perform your ADONIS test
+depth_adonis = adonis(Depth_ado ~ Depth_season, df_ado)
+
+```
+
+```{r beta div & NMDS plot fig 1c}
+NMDS.ord <- ordinate(Munida8, "NMDS", "bray")
+
+NMDS.ord
+
+stressplot(NMDS.ord)
+
+fig1c= plot_ordination(Munida8, NMDS.ord, type = "samples", color = "Surface_Deep" , shape = "Season")
+
+fig1c + theme_set(theme_bw()) + geom_point(size = 5) + theme(legend.text = element_text(size = 20), legend.title = element_blank(), axis.title = element_text(size = 16), axis.text.x = element_text(colour = "black", size=14), axis.text.y = element_text(colour = "black", size=14))
+```
+
+```{r fig2 heatmap}
+Munida8_heatg <- Munida8 %>% #using this file
+  tax_glom(taxrank = "Genus")  %>% #combine OTU data by phylum. You can change this to any rank.
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% #transform to relative abundance
+  filter_taxa(function(x) sum(x) > .01, TRUE)   
+
+
+colnames(tax_table(Munida8_heatg)) = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "OTU")
+
+objg <- Munida8_heatg
+otutableg <- data.frame(OTU = rownames(phyloseq::otu_table(objg)@.Data),
+                       phyloseq::otu_table(objg)@.Data,
+                       phyloseq::tax_table(objg)@.Data,
+                       check.names = TRUE)
+
+
+
+#Extract metadata from the phyloseq object:
+metadatag <- data.frame(phyloseq::sample_data(objg), 
+                       check.names = FALSE )
+
+#write.csv(otutableg, file = "otutableg.csv")
+otutableg = read.csv("hm_all_genus.csv", header = TRUE)
+
+names(otutableg) = gsub(pattern = "X", replacement = "", x = names(otutableg))
+
+otutableg$OTU.1 <- NULL
+
+
+#Load the data with amp_load:
+Munida8heat_phylumg <- amp_load(otutableg, metadatag)
+
+#Season viridis log10
+Munida8heatseasong_viridis_log10<-amp_heatmap(Munida8heat_phylumg,
+facet_by = "Surface_Deep",
+group_by = "Season",
+tax_aggregate = "Order",
+tax_show = 35,
+plot_values = TRUE,
+plot_values_size = 4,
+plot_colorscale = "log10",
+color_vector = c("#443A83FF", "#404688FF", "#3B528BFF", "#365D8DFF", "#31688EFF", "#2C728EFF", "#287C8EFF", "#24868EFF", "#21908CFF", "#1F9A8AFF", "#20A486FF", "#27AD81FF", "#35B779FF", "#47C16EFF", "#5DC863FF", "#75D054FF", "#8FD744FF", "#AADC32FF", "#C7E020FF", "#E3E418FF", "#FDE725FF"),
+plot_legendbreaks = c(0.1, 1, 5, 10,25, 50, 75)) +
+  facet_grid( ~ fct_rev(Surface_Deep), scale = "free") +
+  theme(axis.text.x = element_text(angle = 45, size=14, vjust = 1),
+        axis.text.y = element_text(size=18),
+        legend.position="right",   legend.title=element_text(size=16), 
+      legend.text=element_text(size=14), 
+          strip.text.x = element_text(face="bold", size=18), 
+          strip.background = element_rect(colour = "black", fill = "white"))
+
+Munida8heatseasong_viridis_log10 + scale_x_discrete(limits = c("Spring", "Summer", "Autumn", "Winter"))
+```
+
+```{r distance comparisons fig1d}
+p = Munida8
+m = "bray"
+s = "SampleID"
+d = "Surface_Deep"   #Day
+t = "Season"   #Treatment
+
+  # calc distances
+  wu = vegan::vegdist(t(otu_table(p)), method = "bray")
+  wu.m = melt(as.matrix(wu))
+  
+  colnames(wu.m) <- c("Var1", "Var2", "value")
+  
+  # remove self-comparisons
+  wu.m = wu.m %>%
+    filter(as.character(Var1) != as.character(Var2)) %>%
+    mutate_if(is.factor,as.character)
+  
+  # get sample data (S4 error OK and expected)
+  sd = sample_data(p) %>%
+    select(s, d,t) %>%
+    mutate_if(is.factor,as.character) 
+  
+  # combined distances with sample data
+  colnames(sd) = c("Var1", "t.x", "Season")
+  wu.sd = left_join(wu.m, sd, by = "Var1")
+  
+  colnames(sd) = c("Var2", "t.y", "Season")
+  wu.sd = left_join(wu.sd, sd, by = "Var2")
+  
+ wu.sd.sums = wu.sd %>%
+  filter(Season.x == 'Summer')%>%
+  filter(t.x == "Surface")%>% #show only surf vs. surf
+  filter(t.y == "Surface") %>%
+  mutate_if(is.factor,as.character)
+
+wu.sd.sumd = wu.sd %>%
+  filter(Season.x == 'Summer')%>%
+  filter(t.x == "Deep")%>% #show only deep vs. deep
+  filter(t.y == "Deep") %>%
+  mutate_if(is.factor,as.character)
+
+wu.sd.test <- rbind(wu.sd.sums, wu.sd.sumd)
+
+fig1d = ggplot(wu.sd.test, aes(x = Season.y, y = value, group=Season.y)) +
+  theme_bw() +
+  geom_point() +
+  geom_boxplot() + 
+  facet_wrap(~ fct_rev(t.y), scales = "free_x") + ylab("Bray distance") +
+  theme(axis.text.x=element_text(colour = "black", vjust = 1, hjust = 1, size=18, angle = 45), axis.text.y = element_text(colour = "black", size=18), axis.title.y = element_text(size=18), 
+        strip.text.x = element_text(face="bold", size=18), 
+        strip.background = element_rect(colour = "black", fill = "white")) + 
+  scale_x_discrete(limits = c("Spring", "Summer", "Autumn", "Winter"))
+```
+
+```{r kruskal & tukey test of bray distance matrix}
+#kruskal test for seasons split by surface & deep
+lapply(split(wu.sd.test, wu.sd.test$t.y), function(d) { kruskal.test(value ~ Season.y, data=d) })
+
+lapply(split(wu.sd.test, wu.sd.test$t.y), function(d) { posthoc.kruskal.nemenyi.test(value ~ Season.y, data=d) })
+
+
+lapply(split(wu.sd.test, wu.sd.test$t.y), function(d) { tukey.kruskal.test(value ~ Season.y, alpha = 0.05) })
+
+lapply(split(wu.sd.test, wu.sd.test$t.y), function(d) { pairwise.wilcox.test(value ~ Season.y, data=d) })
+
+
+
+
+lapply(split(wu.sd, wu.sd$t.y), function(d) { kruskal.test(value ~ Season.y, data=d) })
+
+lapply(split(wu.sd, wu.sd$t.y), function(d) { posthoc.kruskal.nemenyi.test(value ~ Season.y, data=d) })
+
+
+lapply(split(wu.sd, wu.sd$t.y), function(d) { tukey.kruskal.test(value ~ Season.y, alpha = 0.05) })
+
+lapply(split(wu.sd, wu.sd$t.y), function(d) { pairwise.wilcox.test(value ~ Season.y, data=d) })
+
+```
+
+```{r GLM surface}
+#Convert phyloseq OTU count data into DGEList for edgeR package
+phyloseq_to_edgeR = function(physeq, group, method = "RLE", ...) {
+  require("edgeR")
+  require("phyloseq")
+  # Enforce orientation.
+  if (!taxa_are_rows(physeq)) {
+    physeq <- t(physeq)
+  }
+  x = as(otu_table(physeq), "matrix")
+  # Add one to protect against overflow, log(0) issues.
+  x = x + 1
+  # Check `group` argument
+  if (identical(all.equal(length(group), 1), TRUE) & nsamples(physeq) > 1) {
+    # Assume that group was a sample variable name (must be categorical)
+    group = get_variable(physeq, group)
+  }
+  # Define gene annotations (`genes`) as tax_table
+  taxonomy = tax_table(physeq, errorIfNULL=FALSE)
+  if( !is.null(taxonomy) ){
+    taxonomy = data.frame(as(taxonomy, "matrix"))
+  } 
+  # Now turn into a DGEList
+  y = DGEList(counts = x, group = group, genes = taxonomy, remove.zeros = TRUE, 
+              ...)
+  # Calculate the normalization factors
+  z = calcNormFactors(y, method = method)
+  # Check for division by zero inside `calcNormFactors`
+  if (!all(is.finite(z$samples$norm.factors))) {
+    stop("Something wrong with edgeR::calcNormFactors on this data,\n         non-finite $norm.factors, consider changing `method` argument")
+  }
+  # Estimate dispersions
+  return(estimateTagwiseDisp(estimateCommonDisp(z)))
+}
+
+#subset phyloseq by season
+surf_sspring = subset_samples(Munidasurf, Season == "Summer" |Season == "Spring")
+surf_sautumn = subset_samples(Munidasurf, Season == "Summer" | Season == "Autumn")
+surf_swinter = subset_samples(Munidasurf, Season == "Summer" | Season == "Winter")
+surf_spwinter = subset_samples(Munidasurf, Season == "Spring" | Season == "Winter")
+surf_spautumn = subset_samples(Munidasurf, Season == "Spring" | Season == "Autumn")
+surf_awinter = subset_samples(Munidasurf, Season == "Autumn" | Season == "Winter")
+
+
+#send my physeq to an edgeR object named “dge”. Use Season for your group.
+
+dge = phyloseq_to_edgeR(Munidasurf, group="Season")
+
+eR_surf_sspring = phyloseq_to_edgeR(surf_sspring, group="Season")
+eR_surf_sautumn = phyloseq_to_edgeR(surf_sautumn, group="Season")
+eR_surf_swinter = phyloseq_to_edgeR(surf_swinter, group="Season")
+eR_surf_spwinter = phyloseq_to_edgeR(surf_spwinter, group="Season")
+eR_surf_spautumn = phyloseq_to_edgeR(surf_spautumn, group="Season")
+eR_surf_awinter = phyloseq_to_edgeR(surf_awinter, group="Season")
+
+
+#Model summer & spring
+a = sample_data(surf_sspring)
+Seasonsurf <-model.matrix(~a$Season)
+x = calcNormFactors(eR_surf_sspring, method="RLE")
+x = estimateGLMCommonDisp(eR_surf_sspring, Seasonsurf)
+x = estimateGLMTrendedDisp(eR_surf_sspring, Seasonsurf)
+x = estimateGLMTagwiseDisp(eR_surf_sspring, Seasonsurf)
+fit <-glmFit(x, Seasonsurf)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_surf_sspring<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_surf_sspring, rownames(magic_bouy_surf_sspring))
+
+magic_bouy_surf_sspring %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model summer & autumn
+a = sample_data(surf_sautumn)
+Seasonsurf <-model.matrix(~a$Season)
+x = calcNormFactors(eR_surf_sautumn, method="RLE")
+x = estimateGLMCommonDisp(eR_surf_sautumn, Seasonsurf)
+x = estimateGLMTrendedDisp(eR_surf_sautumn, Seasonsurf)
+x = estimateGLMTagwiseDisp(eR_surf_sautumn, Seasonsurf)
+fit <-glmFit(x, Seasonsurf)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_surf_sautumn<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_surf_sautumn, rownames(magic_bouy_surf_sautumn))
+
+magic_bouy_surf_sautumn %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model summer & winter
+a = sample_data(surf_swinter)
+Seasonsurf <-model.matrix(~a$Season)
+x = calcNormFactors(eR_surf_swinter, method="RLE")
+x = estimateGLMCommonDisp(eR_surf_swinter, Seasonsurf)
+x = estimateGLMTrendedDisp(eR_surf_swinter, Seasonsurf)
+x = estimateGLMTagwiseDisp(eR_surf_swinter, Seasonsurf)
+fit <-glmFit(x, Seasonsurf)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_surf_swinter<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_surf_swinter, rownames(magic_bouy_surf_swinter))
+
+magic_bouy_surf_swinter %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model spring & winter
+a = sample_data(surf_spwinter)
+Seasonsurf <-model.matrix(~a$Season)
+x = calcNormFactors(eR_surf_spwinter, method="RLE")
+x = estimateGLMCommonDisp(eR_surf_spwinter, Seasonsurf)
+x = estimateGLMTrendedDisp(eR_surf_spwinter, Seasonsurf)
+x = estimateGLMTagwiseDisp(eR_surf_spwinter, Seasonsurf)
+fit <-glmFit(x, Seasonsurf)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_surf_spwinter<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_surf_spwinter, rownames(magic_bouy_surf_spwinter))
+
+magic_bouy_surf_spwinter %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model spring & autumn
+a = sample_data(surf_spautumn)
+Seasonsurf <-model.matrix(~a$Season)
+x = calcNormFactors(eR_surf_spautumn, method="RLE")
+x = estimateGLMCommonDisp(eR_surf_spautumn, Seasonsurf)
+x = estimateGLMTrendedDisp(eR_surf_spautumn, Seasonsurf)
+x = estimateGLMTagwiseDisp(eR_surf_spautumn, Seasonsurf)
+fit <-glmFit(x, Seasonsurf)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_surf_spautumn<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_surf_spautumn, rownames(magic_bouy_surf_spautumn))
+
+magic_bouy_surf_spautumn %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model autumn & winter
+a = sample_data(surf_awinter)
+Seasonsurf <-model.matrix(~a$Season)
+x = calcNormFactors(eR_surf_awinter, method="RLE")
+x = estimateGLMCommonDisp(eR_surf_awinter, Seasonsurf)
+x = estimateGLMTrendedDisp(eR_surf_awinter, Seasonsurf)
+x = estimateGLMTagwiseDisp(eR_surf_awinter, Seasonsurf)
+fit <-glmFit(x, Seasonsurf)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_surf_awinter<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_surf_awinter, rownames(magic_bouy_surf_awinter))
+
+magic_bouy_surf_awinter %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#combine all
+magic_bouy_surf_all<-rbind(magic_bouy_surf_sspring, magic_bouy_surf_sautumn, magic_bouy_surf_swinter, magic_bouy_surf_spwinter, magic_bouy_surf_spautumn, magic_bouy_surf_awinter)
+
+
+#subset original
+
+magic_bouy_surf_all$OTU = magic_bouy_surf_all$`rownames(magic_bouy_surf_all)`
+
+keepTaxa_surf <- rownames(magic_bouy_surf_all)
+Seasonalsurf <- subset_taxa(Munidasurf, OTU %in% keepTaxa_surf)
+SS_glom_gen <- tax_glom(Seasonalsurf, taxrank = 'Genus')
+SS_glom_gen_df <- psmelt(SS_glom_gen)
+SS_glom_gen_df <- SS_glom_gen_df[order(SS_glom_gen_df$Phylum),]
+
+Seasonalsurf_heatg <- Seasonalsurf %>% #using this file
+  tax_glom(taxrank = "Genus")  %>% #combine OTU data by phylum. You can change this to any rank.
+  transform_sample_counts(function(x) {x/sum(x)} ) #transform to relative abundance
+  #filter_taxa(function(x) sum(x) > .01, TRUE) 
+
+
+objg <- Seasonalsurf_heatg
+otutableg <- data.frame(OTU = rownames(phyloseq::otu_table(objg)@.Data),
+                        phyloseq::otu_table(objg)@.Data,
+                        phyloseq::tax_table(objg)@.Data,
+                        check.names = TRUE)
+
+
+
+#Extract metadata from the phyloseq object:
+metadatag <- data.frame(phyloseq::sample_data(objg), 
+                        check.names = FALSE )
+factor(metadata$Month_year, levels=c("Jan-14", "Jun-14", "Jul-14", "Dec-14","Mar-15", "Apr-15", "Aug-15", "Nov-15", "Dec-15", "Jan-16", "Mar-16", "Aug-16", "Feb-17", "Feb2-17", "Mar-17"))
+
+otutableg$OTU.1 <- NULL
+
+
+#change col name
+#colnames(dataframe)[which(names(dataframe) == "columnName")] <- "newColumnName"
+colnames(otutableg)[which(names(otutableg) == "Domain")] <- "Kingdom"
+names(otutableg) = gsub(pattern = "X", replacement = "", x = names(otutableg))
+
+#save otutableg to edit names
+write.csv(otutableg, file = "seasonal_surf_all.csv")
+otutableg = read.csv("seasonal_surf_all.csv", header = TRUE)
+
+write.csv(metadatag, file = "met.csv")
+metadatag = read.csv("met.csv", header = TRUE)
+
+names(metadatag) = gsub(pattern = "X", replacement = "", x = names(metadatag))
+
+#Load the data with amp_load:
+Seasonalsurfheat_phylumg <- amp_load(otutableg, metadatag)
+
+
+Seasonalsurfheatseasong_viridis_log10<-amp_heatmap(Seasonalsurfheat_phylumg,
+                                                   facet_by = "Surface_Deep",
+                                                   group_by = "Season",
+                                                   tax_aggregate = "Genus",
+                                                   tax_show = 32,
+                                                   plot_values = TRUE,
+                                                   plot_values_size = 4,
+                                                   plot_colorscale = "log10",
+                                                   color_vector = c("#443A83FF", "#404688FF", "#3B528BFF", "#365D8DFF", "#31688EFF", "#2C728EFF", "#287C8EFF", "#24868EFF", "#21908CFF", "#1F9A8AFF", "#20A486FF", "#27AD81FF", "#35B779FF", "#47C16EFF", "#5DC863FF", "#75D054FF", "#8FD744FF", "#AADC32FF", "#C7E020FF", "#E3E418FF", "#FDE725FF"),
+                                                   plot_legendbreaks = c(0.1, 1, 5, 10,25, 50, 75)) +
+  theme(axis.text.x = element_text(angle = 45, size=16, vjust = 1),
+        axis.text.y = element_text(size=20),
+        legend.position="right", legend.title=element_text(size=16), 
+      legend.text=element_text(size=14),
+          strip.text.x = element_text(face="bold", size=20), 
+          strip.background = element_rect(colour = "black", fill = "white"))
+
+Seasonalsurfheatseasong_viridis_log10 + scale_x_discrete(limits = c("Spring", "Summer", "Autumn", "Winter"))
+```
+
+```{r GLM deep}
+#subset by season & depth
+deep_sspring = subset_samples(Munidadeep, Season == "Summer" |Season == "Spring")
+deep_sautumn = subset_samples(Munidadeep, Season == "Summer" | Season == "Autumn")
+deep_swinter = subset_samples(Munidadeep, Season == "Summer" | Season == "Winter")
+deep_spwinter = subset_samples(Munidadeep, Season == "Spring" | Season == "Winter")
+deep_spautumn = subset_samples(Munidadeep, Season == "Spring" | Season == "Autumn")
+deep_awinter = subset_samples(Munidadeep, Season == "Autumn" | Season == "Winter")
+
+#Convert phyloseq OTU count data into DGEList for edgeR package
+phyloseq_to_edgeR = function(physeq, group, method = "RLE", ...) {
+  require("edgeR")
+  require("phyloseq")
+  # Enforce orientation.
+  if (!taxa_are_rows(physeq)) {
+    physeq <- t(physeq)
+  }
+  x = as(otu_table(physeq), "matrix")
+  # Add one to protect against overflow, log(0) issues.
+  x = x + 1
+  # Check `group` argument
+  if (identical(all.equal(length(group), 1), TRUE) & nsamples(physeq) > 1) {
+    # Assume that group was a sample variable name (must be categorical)
+    group = get_variable(physeq, group)
+  }
+  # Define gene annotations (`genes`) as tax_table
+  taxonomy = tax_table(physeq, errorIfNULL=FALSE)
+  if( !is.null(taxonomy) ){
+    taxonomy = data.frame(as(taxonomy, "matrix"))
+  } 
+  # Now turn into a DGEList
+  y = DGEList(counts = x, group = group, genes = taxonomy, remove.zeros = TRUE, 
+              ...)
+  # Calculate the normalization factors
+  z = calcNormFactors(y, method = method)
+  # Check for division by zero inside `calcNormFactors`
+  if (!all(is.finite(z$samples$norm.factors))) {
+    stop("Something wrong with edgeR::calcNormFactors on this data,\n         non-finite $norm.factors, consider changing `method` argument")
+  }
+  # Estimate dispersions
+  return(estimateTagwiseDisp(estimateCommonDisp(z)))
+}
+
+#subset phyloseq by season
+
+
+#send my physeq to an edgeR object named “dge”. Use Season for your group.
+
+dge = phyloseq_to_edgeR(Munidadeep, group="Season")
+
+eR_deep_sspring = phyloseq_to_edgeR(deep_sspring, group="Season")
+eR_deep_sautumn = phyloseq_to_edgeR(deep_sautumn, group="Season")
+eR_deep_swinter = phyloseq_to_edgeR(deep_swinter, group="Season")
+eR_deep_spwinter = phyloseq_to_edgeR(deep_spwinter, group="Season")
+eR_deep_spautumn = phyloseq_to_edgeR(deep_spautumn, group="Season")
+eR_deep_awinter = phyloseq_to_edgeR(deep_awinter, group="Season")
+
+
+#Model summer & spring
+a = sample_data(deep_sspring)
+Seasondeep <-model.matrix(~a$Season)
+x = calcNormFactors(eR_deep_sspring, method="RLE")
+x = estimateGLMCommonDisp(eR_deep_sspring, Seasondeep)
+x = estimateGLMTrendedDisp(eR_deep_sspring, Seasondeep)
+x = estimateGLMTagwiseDisp(eR_deep_sspring, Seasondeep)
+fit <-glmFit(x, Seasondeep)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_deep_sspring<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_deep_sspring, rownames(magic_bouy_deep_sspring))
+
+magic_bouy_deep_sspring %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model summer & autumn
+a = sample_data(deep_sautumn)
+Seasondeep <-model.matrix(~a$Season)
+x = calcNormFactors(eR_deep_sautumn, method="RLE")
+x = estimateGLMCommonDisp(eR_deep_sautumn, Seasondeep)
+x = estimateGLMTrendedDisp(eR_deep_sautumn, Seasondeep)
+x = estimateGLMTagwiseDisp(eR_deep_sautumn, Seasondeep)
+fit <-glmFit(x, Seasondeep)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_deep_sautumn<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_deep_sautumn, rownames(magic_bouy_deep_sautumn))
+
+magic_bouy_deep_sautumn %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model summer & winter
+a = sample_data(deep_swinter)
+Seasondeep <-model.matrix(~a$Season)
+x = calcNormFactors(eR_deep_swinter, method="RLE")
+x = estimateGLMCommonDisp(eR_deep_swinter, Seasondeep)
+x = estimateGLMTrendedDisp(eR_deep_swinter, Seasondeep)
+x = estimateGLMTagwiseDisp(eR_deep_swinter, Seasondeep)
+fit <-glmFit(x, Seasondeep)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_deep_swinter<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_deep_swinter, rownames(magic_bouy_deep_swinter))
+
+magic_bouy_deep_swinter %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model spring & winter
+a = sample_data(deep_spwinter)
+Seasondeep <-model.matrix(~a$Season)
+x = calcNormFactors(eR_deep_spwinter, method="RLE")
+x = estimateGLMCommonDisp(eR_deep_spwinter, Seasondeep)
+x = estimateGLMTrendedDisp(eR_deep_spwinter, Seasondeep)
+x = estimateGLMTagwiseDisp(eR_deep_spwinter, Seasondeep)
+fit <-glmFit(x, Seasondeep)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_deep_spwinter<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_deep_spwinter, rownames(magic_bouy_deep_spwinter))
+
+magic_bouy_deep_spwinter %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model spring & autumn
+a = sample_data(deep_spautumn)
+Seasondeep <-model.matrix(~a$Season)
+x = calcNormFactors(eR_deep_spautumn, method="RLE")
+x = estimateGLMCommonDisp(eR_deep_spautumn, Seasondeep)
+x = estimateGLMTrendedDisp(eR_deep_spautumn, Seasondeep)
+x = estimateGLMTagwiseDisp(eR_deep_spautumn, Seasondeep)
+fit <-glmFit(x, Seasondeep)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_deep_spautumn<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_deep_spautumn, rownames(magic_bouy_deep_spautumn))
+
+magic_bouy_deep_spautumn %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#Model autumn & winter
+a = sample_data(deep_awinter)
+Seasondeep <-model.matrix(~a$Season)
+x = calcNormFactors(eR_deep_awinter, method="RLE")
+x = estimateGLMCommonDisp(eR_deep_awinter, Seasondeep)
+x = estimateGLMTrendedDisp(eR_deep_awinter, Seasondeep)
+x = estimateGLMTagwiseDisp(eR_deep_awinter, Seasondeep)
+fit <-glmFit(x, Seasondeep)
+lrt <- glmLRT(fit)
+tt = topTags(lrt, n = 30L, adjust.method = "BH", sort.by = "logFC")
+plotMD(lrt)
+
+magic_bouy_deep_awinter<-subset(tt$table, tt$table$FDR < 0.1)
+
+sigtab<-cbind(magic_bouy_deep_awinter, rownames(magic_bouy_deep_awinter))
+
+magic_bouy_deep_awinter %>%
+
+  arrange(logFC) %>%
+
+  tbl_df()
+
+#combine all
+magic_bouy_deep_all<-rbind(magic_bouy_deep_sspring, magic_bouy_deep_sautumn, magic_bouy_deep_swinter, magic_bouy_deep_spwinter, magic_bouy_deep_spautumn, magic_bouy_deep_awinter)
+
+
+#subset original
+keepTaxa_deep <- magic_bouy_deep_all$OTU
+Seasonaldeep <- subset_taxa(Munidadeep, OTU %in% keepTaxa_deep)
+SS_glom_gen <- tax_glom(Seasonaldeep, taxrank = 'Genus')
+SS_glom_gen_df <- psmelt(SS_glom_gen)
+SS_glom_gen_df <- SS_glom_gen_df[order(SS_glom_gen_df$Phylum),]
+
+Seasonaldeep_heatg <- Seasonaldeep %>% #using this file
+  tax_glom(taxrank = "Genus")  %>% #combine OTU data by phylum. You can change this to any rank.
+  transform_sample_counts(function(x) {x/sum(x)} ) #transform to relative abundance
+  #filter_taxa(function(x) sum(x) > .01, TRUE) 
+
+
+objd <- Seasonaldeep_heatg
+otutabled <- data.frame(OTU = rownames(phyloseq::otu_table(objd)@.Data),
+                        phyloseq::otu_table(objd)@.Data,
+                        phyloseq::tax_table(objd)@.Data,
+                        check.names = TRUE)
+
+
+
+#Extract metadata from the phyloseq object:
+metadatad <- data.frame(phyloseq::sample_data(objd), 
+                        check.names = FALSE )
+factor(metadata$Month_year, levels=c("Jan-14", "Jun-14", "Jul-14", "Dec-14","Mar-15", "Apr-15", "Aug-15", "Nov-15", "Dec-15", "Jan-16", "Mar-16", "Aug-16", "Feb-17", "Feb2-17", "Mar-17"))
+
+otutabled$OTU.1 <- NULL
+
+#change col name
+#colnames(dataframe)[which(names(dataframe) == "columnName")] <- "newColumnName"
+colnames(otutabled)[which(names(otutabled) == "Domain")] <- "Kingdom"
+names(otutabled) = gsub(pattern = "X", replacement = "", x = names(otutabled))
+
+#save otutableg to edit names
+write.csv(otutabled, file = "seasonal_deep_all.csv")
+otutabled = read.csv("seasonal_deep_all.csv", header = TRUE)
+
+#Load the data with amp_load:
+Seasonaldeepheat_phylumg <- amp_load(otutabled, metadatad)
+
+
+Seasonaldeepheatseasong_viridis_log10<-amp_heatmap(Seasonaldeepheat_phylumg,
+                                                   facet_by = "Surface_Deep",
+                                                   group_by = "Season",
+                                                   tax_aggregate = "Genus",
+                                                   tax_show = 32,
+                                                   plot_values = TRUE,
+                                                   plot_values_size = 4,
+                                                   plot_colorscale = "log10",
+                                                   color_vector = c("#443A83FF", "#404688FF", "#3B528BFF", "#365D8DFF", "#31688EFF", "#2C728EFF", "#287C8EFF", "#24868EFF", "#21908CFF", "#1F9A8AFF", "#20A486FF", "#27AD81FF", "#35B779FF", "#47C16EFF", "#5DC863FF", "#75D054FF", "#8FD744FF", "#AADC32FF", "#C7E020FF", "#E3E418FF", "#FDE725FF"),
+                                                   plot_legendbreaks = c(0.1, 1, 5, 10,25, 50, 75)) +
+  theme(axis.text.x = element_text(angle = 45, size=16, vjust = 1),
+        axis.text.y = element_text(size=20),
+        legend.position="right", legend.title=element_text(size=16), 
+      legend.text=element_text(size=14),
+          strip.text.x = element_text(face="bold", size=20), 
+          strip.background = element_rect(colour = "black", fill = "white"))
+
+Seasonaldeepheatseasong_viridis_log10 + scale_x_discrete(limits = c("Spring", "Summer", "Autumn", "Winter"))
+```
+
+```{r all seasonally changing taxa}
+#combine all
+magic_bouy_all<-rbind(magic_bouy_surf_sspring, magic_bouy_surf_sautumn, magic_bouy_surf_swinter, magic_bouy_surf_spwinter, magic_bouy_surf_spautumn, magic_bouy_surf_awinter, magic_bouy_deep_sspring, magic_bouy_deep_sautumn, magic_bouy_deep_swinter, magic_bouy_deep_spwinter, magic_bouy_deep_spautumn, magic_bouy_deep_awinter)
+
+
+magic_bouy_all$OTU = magic_bouy_all$`rownames(magic_bouy_all)`
+
+keepTaxa_all <- magic_bouy_all$OTU
+Seasonalall <- subset_taxa(Munida8, OTU %in% keepTaxa_all)
+SS_glom_gen <- tax_glom(Seasonalall, taxrank = 'Genus')
+SS_glom_gen_df <- psmelt(SS_glom_gen)
+SS_glom_gen_df <- SS_glom_gen_df[order(SS_glom_gen_df$Phylum),]
+
+Seasonalall_heatg <- Seasonalall %>% #using this file
+  tax_glom(taxrank = "Genus")  %>% #combine OTU data by phylum. You can change this to any rank.
+  transform_sample_counts(function(x) {x/sum(x)} ) #transform to relative abundance
+  #filter_taxa(function(x) sum(x) > .01, TRUE) 
+
+
+objg <- Seasonalall_heatg
+otutableg <- data.frame(OTU = rownames(phyloseq::otu_table(objg)@.Data),
+                        phyloseq::otu_table(objg)@.Data,
+                        phyloseq::tax_table(objg)@.Data,
+                        check.names = TRUE)
+
+
+
+#Extract metadata from the phyloseq object:
+metadatag <- data.frame(phyloseq::sample_data(objg), 
+                        check.names = FALSE )
+
+otutableg$OTU.1 <- NULL
+
+
+#change col name
+#colnames(dataframe)[which(names(dataframe) == "columnName")] <- "newColumnName"
+colnames(otutableg)[which(names(otutableg) == "Domain")] <- "Kingdom"
+names(otutableg) = gsub(pattern = "X", replacement = "", x = names(otutableg))
+
+#save otutableg to edit names
+write.csv(otutableg, file = "seasonal_all.csv")
+otutableg = read.csv("seasonal_all.csv", header = TRUE)
+
+#Load the data with amp_load:
+Seasonalallheat_phylumg <- amp_load(otutableg, metadatag)
+
+
+
+#abundance time series seasonal taxa
+amp_timeseries(Seasonalallheat_phylumg,
+  time_variable = "Order",
+  group_by = "Surface_Deep",
+  split = TRUE,
+  scales = "free_y",
+  tax_show = 70,
+  tax_aggregate = "Genus",
+  tax_add = "Phylum") + scale_x_discrete(limits = c("Jan-14", "Jun-14", "Jul-14", "Dec-14","Mar-15", "Apr-15", "Aug-15", "Nov-15", "Dec-15", "Jan-16", "Mar-16", "Aug-16", "Feb-17", "Feb2-17", "Mar-17"))
+```
